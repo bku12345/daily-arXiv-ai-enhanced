@@ -12,3 +12,25 @@ ai/.env
 test/*
 .idea/
 .cursorrules
+
+
+# 周报相关自动生成文件（核心忽略项）
+weekly_papers.json
+weekly_report.md
+
+# Python 缓存文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+
+# 本地环境变量文件（避免提交密钥）
+.env
+.env.local
+.env.*
+
+# 临时文件
+*.tmp
+*.log
