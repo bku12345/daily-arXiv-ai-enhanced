@@ -19,9 +19,8 @@ TARGET_CATEGORIES = os.getenv("CATEGORIES", "cs.CV,cs.GR,cs.CL,cs.AI").split(","
 LANGUAGE = os.getenv("LANGUAGE", "Chinese")
 
 def get_daily_papers(date_str: str) -> list:
-    """爬取指定日期的论文（适配原项目的 HTML 结构）"""
+    """爬取指定日期的论文（适配原项目真实HTML结构）"""
     try:
-        # 原项目的每日页面路径是根目录下的 YYYY-MM-DD.html
         daily_url = f"{BASE_URL}{date_str}.html"
         response = requests.get(daily_url, timeout=15)
         if response.status_code != 200:
@@ -30,19 +29,24 @@ def get_daily_papers(date_str: str) -> list:
         soup = BeautifulSoup(response.text, "html.parser")
         papers = []
         
-        # 适配原项目的论文条目 HTML 类名（核心！原项目用的是这些类名）
-        paper_items = soup.find_all("div", class_="col-md-6 col-lg-4 mb-4")
+        # 适配原项目真实的论文卡片选择器（核心调整）
+        # 先找到所有论文卡片的容器（根据原项目页面结构）
+        paper_items = soup.find_all("div", class_="card mb-3")  # 原项目真实的论文卡片类名
         for item in paper_items:
-            # 解析标题和链接
-            title_elem = item.find("h5", class_="card-title")
-            title = title_elem.text.strip() if title_elem else ""
-            url = title_elem.find("a")["href"] if (title_elem and title_elem.find("a")) else ""
+            # 解析标题和链接（适配真实标签结构）
+            title_elem = item.find("h4") or item.find("h5")
+            if not title_elem:
+                continue
+            title = title_elem.text.strip()
+            url_elem = title_elem.find("a")
+            url = url_elem["href"] if url_elem and "href" in url_elem.attrs else ""
             
-            # 解析摘要
-            abstract = item.find("div", class_="card-text").text.strip() if item.find("div", class_="card-text") else ""
+            # 解析摘要（适配真实标签）
+            abstract_elem = item.find("div", class_="card-body") or item.find("p")
+            abstract = abstract_elem.text.strip() if abstract_elem else ""
             
-            # 解析作者/分类（原项目的 meta 信息在 small 标签）
-            meta_elem = item.find("small")
+            # 解析分类/作者（适配真实标签）
+            meta_elem = item.find("small", class_="text-muted")
             meta_text = meta_elem.text.strip() if meta_elem else ""
             
             # 过滤目标分类的论文
@@ -51,14 +55,14 @@ def get_daily_papers(date_str: str) -> list:
                     "date": date_str,
                     "title": title,
                     "abstract": abstract,
-                    "meta": meta_text,  # 作者+分类信息
+                    "meta": meta_text,
                     "url": url
                 })
         return papers
     except Exception as e:
         print(f"爬取 {date_str} 失败: {str(e)}")
         return []
-
+        
 def get_weekly_papers() -> tuple:
     """获取过去7天的论文"""
     end_dt = datetime.now()
@@ -107,13 +111,10 @@ def generate_weekly_report(categorized_papers: dict) -> str:
         return f"周报生成失败：{str(e)}\n请检查API Key和BASE_URL配置"
 
 def save_files(weekly_papers: list, report: str):
-    """保存论文数据和周报（供前端展示）"""
-    # 保存论文数据为JSON（修复pandas参数兼容问题）
+    """保存论文数据和周报（修复参数错误）"""
+    # 保存论文数据为JSON（移除ensure_ascii，改用force_ascii=False）
     df = pd.DataFrame(weekly_papers)
-    # 兼容新版pandas的写法
-    json_str = df.to_json(orient="records", force_ascii=False, indent=2)
-    with open("weekly_papers.json", "w", encoding="utf-8") as f:
-        f.write(json_str)
+    df.to_json("weekly_papers.json", orient="records", force_ascii=False, indent=2)
     
     # 保存周报为MD
     with open("weekly_report.md", "w", encoding="utf-8") as f:
