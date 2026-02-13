@@ -108,14 +108,16 @@ def generate_weekly_report(categorized_papers: dict) -> str:
 
 def save_files(weekly_papers: list, report: str):
     """保存论文数据和周报（供前端展示）"""
-    # 保存论文数据为JSON
+    # 保存论文数据为JSON（修复pandas参数兼容问题）
     df = pd.DataFrame(weekly_papers)
-    df.to_json("weekly_papers.json", orient="records", ensure_ascii=False, indent=2)
+    # 兼容新版pandas的写法
+    json_str = df.to_json(orient="records", force_ascii=False, indent=2)
+    with open("weekly_papers.json", "w", encoding="utf-8") as f:
+        f.write(json_str)
     
     # 保存周报为MD
     with open("weekly_report.md", "w", encoding="utf-8") as f:
         f.write(f"# arXiv 每周论文汇总 ({datetime.now().strftime('%Y-%m-%d')})\n\n{report}")
-
 if __name__ == "__main__":
     # 主流程
     print("开始爬取每周论文...")
