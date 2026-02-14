@@ -1,132 +1,195 @@
+import os
 import requests
-from bs4 import BeautifulSoup
 import pandas as pd
 from datetime import datetime, timedelta
-import os
-from openai import OpenAI
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+import openai
 
-# 初始化 OpenAI 客户端（读取 GitHub Actions 的 Secrets）
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-)
+# 加载环境变量
+load_dotenv()
 
-# 配置项（可通过 GitHub Variables 调整）
-BASE_URL = "https://bku12345.github.io/daily-arXiv-ai-enhanced/"
-WEEK_DAYS = 7
-# 读取 GitHub Variables 中的分类（和原项目保持一致）
-TARGET_CATEGORIES = os.getenv("CATEGORIES", "cs.CV,cs.GR,cs.CL,cs.AI").split(",")
-LANGUAGE = os.getenv("LANGUAGE", "Chinese")
+# 配置项（可根据需求调整）
+TARGET_CATEGORIES = ["All ,cs.AI ,cs.CE ,cs.CL ,cs.CV ,cs.GT ,cs.IT"]  # 目标论文分类
+WEEK_DAYS = 7  # 爬取近7天的论文
+LANGUAGE = os.getenv("LANGUAGE", "Chinese or English")  # 周报生成语言
+
+# 初始化 OpenAI/DeepSeek 客户端
+openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.base_url = os.getenv("OPENAI_BASE_URL", "https://api.silicon.com")
+MODEL_NAME = os.getenv("MODEL_NAME", "Weekly arXiv AI Enhanced")
 
 def get_daily_papers(date_str: str) -> list:
-    """适配原项目真实的 HTML 结构"""
+    """
+    爬取指定日期的每日论文页面数据（适配原项目真实HTML结构）
+    :param date_str: 日期字符串，格式 YYYY-MM-DD
+    :return: 论文列表
+    """
     try:
+        # 原项目每日论文页面的URL格式
         daily_url = f"https://bku12345.github.io/daily-arXiv-ai-enhanced/{date_str}.html"
         response = requests.get(daily_url, timeout=15)
+        
+        # 页面无法访问则返回空列表
         if response.status_code != 200:
+            print(f"⚠️  {date_str} 页面无法访问，状态码：{response.status_code}")
             return []
         
         soup = BeautifulSoup(response.text, "html.parser")
         papers = []
         
-        # 原项目真实的论文卡片类名
+        # 原项目真实的论文卡片类名：col-md-6 col-lg-4 mb-4
         paper_items = soup.find_all("div", class_="col-md-6 col-lg-4 mb-4")
         for item in paper_items:
-            # 解析标题和链接
+            # 解析标题和链接（原项目标题在h5.card-title）
             title_elem = item.find("h5", class_="card-title")
             title = title_elem.text.strip() if title_elem else ""
             url = title_elem.find("a")["href"] if (title_elem and title_elem.find("a")) else ""
             
-            # 解析摘要
-            abstract = item.find("div", class_="card-text").text.strip() if item.find("div", class_="card-text") else ""
+            # 解析摘要（原项目摘要在div.card-text）
+            abstract_elem = item.find("div", class_="card-text")
+            abstract = abstract_elem.text.strip() if abstract_elem else ""
             
-            # 解析作者/分类
+            # 解析作者/分类（原项目在small标签）
             meta_elem = item.find("small")
             meta_text = meta_elem.text.strip() if meta_elem else ""
             
-            # 过滤目标分类
+            # 过滤目标分类的论文
             if any(cat.strip() in meta_text for cat in TARGET_CATEGORIES):
                 papers.append({
                     "date": date_str,
                     "title": title,
                     "abstract": abstract,
-                    "meta": meta_text,
+                    "meta": meta_text,  # 作者+分类信息
                     "url": url
                 })
+        
+        print(f"✅ {date_str} 爬取到 {len(papers)} 篇目标论文")
         return papers
     except Exception as e:
-        print(f"爬取 {date_str} 失败: {str(e)}")
+        print(f"❌ 爬取{date_str}失败：{str(e)}")
         return []
-        
-def get_weekly_papers() -> tuple:
-    """获取过去7天的论文"""
-    end_dt = datetime.now()
-    date_list = [(end_dt - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(WEEK_DAYS)]
+
+def get_weekly_papers() -> tuple[list, dict]:
+    """
+    爬取近7天的所有目标论文，并按分类整理
+    :return: 所有论文列表、按分类分组的论文字典
+    """
     weekly_papers = []
+    categorized_papers = {cat: [] for cat in TARGET_CATEGORIES}
     
-    for date_str in date_list:
+    # 生成近7天的日期字符串（YYYY-MM-DD）
+    for i in range(WEEK_DAYS):
+        target_date = datetime.now() - timedelta(days=i)
+        date_str = target_date.strftime("%Y-%m-%d")
         daily_papers = get_daily_papers(date_str)
         weekly_papers.extend(daily_papers)
-    
-    # 按分类聚合
-    categorized_papers = {}
-    for paper in weekly_papers:
-        # 提取分类
-        cat = [c for c in TARGET_CATEGORIES if c.strip() in paper["meta"]]
-        cat = cat[0] if cat else "Other"
-        if cat not in categorized_papers:
-            categorized_papers[cat] = []
-        categorized_papers[cat].append(paper)
+        
+        # 按分类分组
+        for paper in daily_papers:
+            for cat in TARGET_CATEGORIES:
+                if cat in paper["meta"]:
+                    categorized_papers[cat].append(paper)
+                    break
     
     return weekly_papers, categorized_papers
 
 def generate_weekly_report(categorized_papers: dict) -> str:
-    """生成周报（适配语言配置）"""
+    """
+    调用大模型生成周报（适配DeepSeek/OpenAI）
+    :param categorized_papers: 按分类分组的论文字典
+    :return: 生成的周报文本
+    """
+    # 构造提示词
     prompt = f"""
-    请用{LANGUAGE}生成arXiv每周AI论文汇总周报，要求：
-    1. 整体总结：本周{list(categorized_papers.keys())}分类论文的核心趋势、热门研究方向（150字左右）
-    2. 分类详情：按分类总结关键研究内容、创新点（每个分类100字左右）
-    3. 值得关注的论文：列出3-5篇有重要突破的论文（标题+核心贡献）
-    4. 语言简洁专业，结构清晰，适合科研人员快速阅读
-
-    论文数据：{categorized_papers}
+    请你作为AI领域研究员，用{LANGUAGE}生成arXiv每周论文周报，要求如下：
+    1. 整体总结：本周AI/机器学习领域的核心研究趋势（150字左右）；
+    2. 分类详情：按{list(categorized_papers.keys())}分别总结，每类突出3-5个核心创新点；
+    3. 值得关注的论文：从所有论文中选3-5篇，列出标题+核心贡献（50字/篇）；
+    4. 语言简洁专业，符合学术周报风格，不要冗余内容。
+    
+    论文数据：
+    {categorized_papers}
     """
     
     try:
-        response = client.chat.completions.create(
-            model=os.getenv("MODEL_NAME", "deepseek-chat"),
+        # 调用DeepSeek/OpenAI API
+        response = openai.chat.completions.create(
+            model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "你是专业的AI领域研究员，擅长总结arXiv论文并生成结构化周报"},
+                {"role": "system", "content": "你是专业的AI领域研究员，擅长总结arXiv论文周报"},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3
+            temperature=0.3,  # 降低随机性，保证总结准确
+            max_tokens=2000
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        return f"周报生成失败：{str(e)}\n请检查API Key和BASE_URL配置"
+        print(f"❌ 大模型生成周报失败：{str(e)}")
+        # 生成兜底周报
+        return f"""# arXiv 每周论文汇总 ({datetime.now().strftime('%Y-%m-%d')})
+
+## 整体总结
+本周未成功生成AI领域研究趋势总结（原因：{str(e)}）。
+
+## 分类详情
+{chr(10).join([f"### {cat}\n- 本周共{len(papers)}篇相关论文" for cat, papers in categorized_papers.items()])}
+
+## 值得关注的论文
+暂无（生成失败）
+"""
 
 def save_files(weekly_papers: list, report: str):
-    """保存论文数据和周报（修复参数错误）"""
-    # 保存论文数据为JSON（移除ensure_ascii，改用force_ascii=False）
-    df = pd.DataFrame(weekly_papers)
-    df.to_json("weekly_papers.json", orient="records", force_ascii=False, indent=2)
-    
-    # 保存周报为MD
-    with open("weekly_report.md", "w", encoding="utf-8") as f:
-        f.write(f"# arXiv 每周论文汇总 ({datetime.now().strftime('%Y-%m-%d')})\n\n{report}")
+    """
+    保存论文数据到JSON、周报到MD（修复pandas参数错误）
+    :param weekly_papers: 所有论文列表
+    :param report: 生成的周报文本
+    """
+    try:
+        # 保存论文数据到JSON（修复：ensure_ascii → force_ascii）
+        df = pd.DataFrame(weekly_papers)
+        df.to_json(
+            "weekly_papers.json",
+            orient="records",
+            force_ascii=False,  # 关键修复：支持中文
+            indent=2  # 格式化输出，方便查看
+        )
         
+        # 保存周报到MD
+        with open("weekly_report.md", "w", encoding="utf-8") as f:
+            f.write(report)
+        
+        print(f"✅ 文件保存成功：weekly_papers.json（{len(weekly_papers)}条数据）、weekly_report.md")
+    except Exception as e:
+        print(f"❌ 文件保存失败：{str(e)}")
+
 if __name__ == "__main__":
-    print("开始爬取每周论文...")
-    weekly_papers, categorized_papers = get_weekly_papers()
-    print(f"爬取到 {len(weekly_papers)} 篇论文")
+    """主执行逻辑"""
+    print("===== 开始生成arXiv每周论文周报 =====")
     
-    if len(weekly_papers) == 0:
-        print("警告：未爬取到任何论文，生成空周报")
-        report = f"# arXiv 每周论文汇总 ({datetime.now().strftime('%Y-%m-%d')})\n\n本周未爬取到相关论文，请检查原项目的每日论文页面是否正常。"
+    # 1. 爬取每周论文
+    weekly_papers, categorized_papers = get_weekly_papers()
+    total_papers = len(weekly_papers)
+    print(f"\n📊 本周共爬取到 {total_papers} 篇目标论文")
+    
+    # 2. 生成周报（空数据兜底）
+    if total_papers == 0:
+        print("⚠️  未爬取到任何论文，生成空周报")
+        report = f"""# arXiv 每周论文汇总 ({datetime.now().strftime('%Y-%m-%d')})
+
+## 整体总结
+本周未爬取到 cs.AI/cs.LG/stat.ML 分类的相关论文，请检查：
+1. 原项目每日论文页面是否正常访问；
+2. 目标分类是否正确；
+3. 网络是否能访问arXiv相关页面。
+
+## 值得关注的论文
+暂无
+"""
     else:
-        print("生成周报...")
+        print("📝 开始生成周报...")
         report = generate_weekly_report(categorized_papers)
     
-    print("保存文件...")
+    # 3. 保存文件
     save_files(weekly_papers, report)
-    print("周报生成完成！")
+    print("\n===== 周报生成流程结束 =====")
