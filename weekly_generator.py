@@ -127,13 +127,14 @@ def generate_weekly_report(categorized_papers: dict) -> str:
     except Exception as e:
         print(f"❌ 大模型生成周报失败：{str(e)}")
         # 生成兜底周报
+        category_details = "\n".join([f"### {cat}\n- 本周共{len(papers)}篇相关论文" for cat, papers in categorized_papers.items()])
         return f"""# arXiv 每周论文汇总 ({datetime.now().strftime('%Y-%m-%d')})
 
 ## 整体总结
 本周未成功生成AI领域研究趋势总结（原因：{str(e)}）。
 
 ## 分类详情
-{chr(10).join([f"### {cat}\n- 本周共{len(papers)}篇相关论文" for cat, papers in categorized_papers.items()])}
+{category_details}
 
 ## 值得关注的论文
 暂无（生成失败）
@@ -182,6 +183,11 @@ if __name__ == "__main__":
 1. 原项目每日论文页面是否正常访问；
 2. 目标分类是否正确；
 3. 网络是否能访问arXiv相关页面。
+
+## 分类详情
+- cs.AI：0篇
+- cs.LG：0篇
+- stat.ML：0篇
 
 ## 值得关注的论文
 暂无
