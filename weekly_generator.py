@@ -19,9 +19,9 @@ TARGET_CATEGORIES = os.getenv("CATEGORIES", "cs.CV,cs.GR,cs.CL,cs.AI").split(","
 LANGUAGE = os.getenv("LANGUAGE", "Chinese")
 
 def get_daily_papers(date_str: str) -> list:
-    """爬取指定日期的论文（适配原项目真实HTML结构）"""
+    """适配原项目真实的 HTML 结构"""
     try:
-        daily_url = f"{BASE_URL}{date_str}.html"
+        daily_url = f"https://bku12345.github.io/daily-arXiv-ai-enhanced/{date_str}.html"
         response = requests.get(daily_url, timeout=15)
         if response.status_code != 200:
             return []
@@ -29,27 +29,22 @@ def get_daily_papers(date_str: str) -> list:
         soup = BeautifulSoup(response.text, "html.parser")
         papers = []
         
-        # 适配原项目真实的论文卡片选择器（核心调整）
-        # 先找到所有论文卡片的容器（根据原项目页面结构）
-        paper_items = soup.find_all("div", class_="card mb-3")  # 原项目真实的论文卡片类名
+        # 原项目真实的论文卡片类名
+        paper_items = soup.find_all("div", class_="col-md-6 col-lg-4 mb-4")
         for item in paper_items:
-            # 解析标题和链接（适配真实标签结构）
-            title_elem = item.find("h4") or item.find("h5")
-            if not title_elem:
-                continue
-            title = title_elem.text.strip()
-            url_elem = title_elem.find("a")
-            url = url_elem["href"] if url_elem and "href" in url_elem.attrs else ""
+            # 解析标题和链接
+            title_elem = item.find("h5", class_="card-title")
+            title = title_elem.text.strip() if title_elem else ""
+            url = title_elem.find("a")["href"] if (title_elem and title_elem.find("a")) else ""
             
-            # 解析摘要（适配真实标签）
-            abstract_elem = item.find("div", class_="card-body") or item.find("p")
-            abstract = abstract_elem.text.strip() if abstract_elem else ""
+            # 解析摘要
+            abstract = item.find("div", class_="card-text").text.strip() if item.find("div", class_="card-text") else ""
             
-            # 解析分类/作者（适配真实标签）
-            meta_elem = item.find("small", class_="text-muted")
+            # 解析作者/分类
+            meta_elem = item.find("small")
             meta_text = meta_elem.text.strip() if meta_elem else ""
             
-            # 过滤目标分类的论文
+            # 过滤目标分类
             if any(cat.strip() in meta_text for cat in TARGET_CATEGORIES):
                 papers.append({
                     "date": date_str,
@@ -119,14 +114,18 @@ def save_files(weekly_papers: list, report: str):
     # 保存周报为MD
     with open("weekly_report.md", "w", encoding="utf-8") as f:
         f.write(f"# arXiv 每周论文汇总 ({datetime.now().strftime('%Y-%m-%d')})\n\n{report}")
+        
 if __name__ == "__main__":
-    # 主流程
     print("开始爬取每周论文...")
     weekly_papers, categorized_papers = get_weekly_papers()
     print(f"爬取到 {len(weekly_papers)} 篇论文")
     
-    print("生成周报...")
-    report = generate_weekly_report(categorized_papers)
+    if len(weekly_papers) == 0:
+        print("警告：未爬取到任何论文，生成空周报")
+        report = f"# arXiv 每周论文汇总 ({datetime.now().strftime('%Y-%m-%d')})\n\n本周未爬取到相关论文，请检查原项目的每日论文页面是否正常。"
+    else:
+        print("生成周报...")
+        report = generate_weekly_report(categorized_papers)
     
     print("保存文件...")
     save_files(weekly_papers, report)
